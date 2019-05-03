@@ -19,18 +19,19 @@ package com.netflix.spinnaker.echo.pipelinetriggers.eventhandlers;
 import com.netflix.spinnaker.echo.model.Event;
 import com.netflix.spinnaker.echo.model.Pipeline;
 import com.netflix.spinnaker.echo.model.trigger.TriggerEvent;
-import java.util.Collections;
+import com.netflix.spinnaker.echo.pipelinetriggers.PipelineCache;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Interface for classes that match a TriggerEvent to pipelines that should be triggered in response
  * to the event.
  */
 public interface TriggerEventHandler<T extends TriggerEvent> {
+  /** @return the list of trigger types */
+  List<String> supportedTriggerTypes();
 
   /**
    * @param eventType An event type
@@ -40,46 +41,30 @@ public interface TriggerEventHandler<T extends TriggerEvent> {
 
   /**
    * Converts an event to the type handled by the implementing class
+   *
    * @param event The event to convert
    * @return The converted event
    */
   T convertEvent(Event event);
 
   /**
-   * Determines whether the given pipeline should be triggered by the given event, and if so returns
-   * the fully-formed pipeline (with the trigger set) that should be executed.
+   * Given a list of pipelines and an event, returns the pipelines that should be triggered by the
+   * event
+   *
    * @param event The triggering event
-   * @param pipeline The pipeline to potentially trigger
-   * @return An Optional containing the pipeline to be triggered, or empty if it should not be triggered
-   */
-  Optional<Pipeline> withMatchingTrigger(T event, Pipeline pipeline);
-
-  /**
-   * Given a list of pipelines and an event, returns the pipelines that should be triggered
-   * by the event
-   * @param event The triggering event
-   * @param pipelines The pipelines to consider
+   * @param pipelineCache a source for pipelines and triggers to consider
    * @return The pipelines that should be triggered
    */
-  default List<Pipeline> getMatchingPipelines(T event, List<Pipeline> pipelines) {
-    if (isSuccessfulTriggerEvent(event)) {
-      return pipelines.stream()
-        .map(p -> withMatchingTrigger(event, p))
-        .filter(Optional::isPresent)
-        .map(Optional::get)
-        .collect(Collectors.toList());
-    } else {
-      return Collections.emptyList();
-    }
-  }
+  List<Pipeline> getMatchingPipelines(T event, PipelineCache pipelineCache) throws TimeoutException;
 
   /**
    * Given a pipeline, gets any additional tags that should be associated with metrics recorded
    * about that pipeline
+   *
    * @param pipeline The pipeline
    * @return Tags to be included in metrics
    */
-  default Map<String,String> getAdditionalTags(Pipeline pipeline) {
+  default Map<String, String> getAdditionalTags(Pipeline pipeline) {
     return new HashMap<>();
   }
 

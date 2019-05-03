@@ -33,7 +33,7 @@ abstract class AbstractEventNotificationAgent implements EchoEventListener {
   @Autowired(required = false)
   protected ObjectMapper mapper
 
-  @Value('${spinnaker.baseUrl}')
+  @Value('${spinnaker.base-url}')
   String spinnakerUrl
 
   static Map CONFIG = [
@@ -53,7 +53,7 @@ abstract class AbstractEventNotificationAgent implements EchoEventListener {
 
   @Override
   void processEvent(Event event) {
-    if (log.isDebugEnabled() && mapper != null) {
+    if (log.isDebugEnabled() && mapper != null && !event.getDetails().getType().equals("pubsub")) {
       log.debug("Event received: " + mapper.writerWithDefaultPrettyPrinter().writeValueAsString(event))
     }
 

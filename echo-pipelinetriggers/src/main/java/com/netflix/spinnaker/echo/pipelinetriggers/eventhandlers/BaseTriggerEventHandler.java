@@ -22,9 +22,16 @@ import com.netflix.spinnaker.echo.model.Event;
 import com.netflix.spinnaker.echo.model.Pipeline;
 import com.netflix.spinnaker.echo.model.Trigger;
 import com.netflix.spinnaker.echo.model.trigger.TriggerEvent;
-import java.util.Optional;
+import com.netflix.spinnaker.echo.pipelinetriggers.PipelineCache;
+import com.netflix.spinnaker.echo.pipelinetriggers.artifacts.ArtifactMatcher;
+import com.netflix.spinnaker.kork.artifacts.model.Artifact;
+import java.util.*;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -33,7 +40,8 @@ import lombok.extern.slf4j.Slf4j;
  * manual events.
  */
 @Slf4j
-public abstract class BaseTriggerEventHandler<T extends TriggerEvent> implements TriggerEventHandler<T> {
+public abstract class BaseTriggerEventHandler<T extends TriggerEvent>
+    implements TriggerEventHandler<T> {
   private final Registry registry;
   protected final ObjectMapper objectMapper;
 
@@ -42,21 +50,47 @@ public abstract class BaseTriggerEventHandler<T extends TriggerEvent> implements
     this.objectMapper = objectMapper;
   }
 
-  public Optional<Pipeline> withMatchingTrigger(T event, Pipeline pipeline) {
-    if (pipeline.getTriggers() == null || pipeline.isDisabled()) {
-      return Optional.empty();
-    } else {
-      try {
-        return pipeline.getTriggers()
-          .stream()
-          .filter(this::isValidTrigger)
-          .filter(matchTriggerFor(event, pipeline))
+  @Override
+  public List<Pipeline> getMatchingPipelines(T event, PipelineCache pipelineCache)
+      throws TimeoutException {
+    if (!isSuccessfulTriggerEvent(event)) {
+      return Collections.emptyList();
+    }
+
+    Map<String, List<Trigger>> triggers = pipelineCache.getEnabledTriggersSync();
+    return supportedTriggerTypes().stream()
+        .flatMap(
+            triggerType ->
+                Optional.ofNullable(triggers.get(triggerType)).orElse(Collections.emptyList())
+                    .stream())
+        .filter(this::isValidTrigger)
+        .filter(matchTriggerFor(event))
+        .map(trigger -> withMatchingTrigger(event, trigger))
+        .filter(Optional::isPresent)
+        .map(Optional::get)
+        .distinct()
+        .collect(Collectors.toList());
+  }
+
+  private Optional<Pipeline> withMatchingTrigger(T event, Trigger trigger) {
+    try {
+      return Stream.of(trigger)
+          .map(buildTrigger(event))
+          .map(t -> new TriggerWithArtifacts(t, getArtifacts(event, t)))
+          .filter(
+              ta ->
+                  ArtifactMatcher.anyArtifactsMatchExpected(
+                      ta.artifacts, ta.trigger, ta.trigger.getParent().getExpectedArtifacts()))
           .findFirst()
-          .map(buildTrigger(pipeline, event));
-      } catch (Exception e) {
-        onSubscriberError(e);
-        return Optional.empty();
-      }
+          .map(
+              ta ->
+                  ta.trigger
+                      .getParent()
+                      .withTrigger(ta.trigger)
+                      .withReceivedArtifacts(ta.artifacts));
+    } catch (Exception e) {
+      onSubscriberError(e);
+      return Optional.empty();
     }
   }
 
@@ -67,14 +101,28 @@ public abstract class BaseTriggerEventHandler<T extends TriggerEvent> implements
 
   @Override
   public T convertEvent(Event event) {
-    return  objectMapper.convertValue(event, getEventType());
+    return objectMapper.convertValue(event, getEventType());
   }
 
-  protected abstract Predicate<Trigger> matchTriggerFor(T event, Pipeline pipeline);
+  private List<Artifact> getArtifacts(T event, Trigger trigger) {
+    List<Artifact> results = new ArrayList<>();
+    Optional.ofNullable(getArtifactsFromEvent(event, trigger)).ifPresent(results::addAll);
+    return results;
+  }
 
-  protected abstract Function<Trigger, Pipeline> buildTrigger(Pipeline pipeline, T event);
+  protected abstract Predicate<Trigger> matchTriggerFor(T event);
+
+  protected abstract Function<Trigger, Trigger> buildTrigger(T event);
 
   protected abstract boolean isValidTrigger(Trigger trigger);
 
   protected abstract Class<T> getEventType();
+
+  protected abstract List<Artifact> getArtifactsFromEvent(T event, Trigger trigger);
+
+  @Value
+  private class TriggerWithArtifacts {
+    Trigger trigger;
+    List<Artifact> artifacts;
+  }
 }

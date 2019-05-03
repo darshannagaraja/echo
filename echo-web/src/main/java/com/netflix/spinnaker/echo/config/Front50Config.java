@@ -30,17 +30,18 @@ import retrofit.Endpoints;
 import retrofit.RestAdapter.Builder;
 import retrofit.RestAdapter.LogLevel;
 import retrofit.client.OkClient;
+import retrofit.converter.JacksonConverter;
 
 @Configuration
 @Slf4j
 public class Front50Config {
-  @Value("${okHttpClient.connectionPool.maxIdleConnections:5}")
+  @Value("${ok-http-client.connection-pool.max-idle-connections:5}")
   private int maxIdleConnections;
 
-  @Value("${okHttpClient.connectionPool.keepAliveDurationMs:300000}")
+  @Value("${ok-http-client.connection-pool.keep-alive-duration-ms:300000}")
   private int keepAliveDurationMs;
 
-  @Value("${okHttpClient.retryOnConnectionFailure:true}")
+  @Value("${ok-http-client.retry-on-connection-failure:true}")
   private boolean retryOnConnectionFailure;
 
   @Bean
@@ -57,19 +58,22 @@ public class Front50Config {
   }
 
   @Bean
-  public Endpoint front50Endpoint(@Value("${front50.baseUrl}") String front50BaseUrl) {
+  public Endpoint front50Endpoint(@Value("${front50.base-url}") String front50BaseUrl) {
     return Endpoints.newFixedEndpoint(front50BaseUrl);
   }
 
   @Bean
-  public Front50Service front50Service(Endpoint front50Endpoint, OkHttpClient okHttpClient,
-    LogLevel retrofitLogLevel) {
+  public Front50Service front50Service(
+      Endpoint front50Endpoint, OkHttpClient okHttpClient, LogLevel retrofitLogLevel) {
     log.info("front50 service loaded");
+
     return new Builder()
-      .setEndpoint(front50Endpoint)
-      .setClient(new OkClient(okHttpClient))
-      .setLogLevel(retrofitLogLevel)
-      .setLog(new Slf4jRetrofitLogger(Front50Service.class)).build()
-      .create(Front50Service.class);
+        .setEndpoint(front50Endpoint)
+        .setConverter(new JacksonConverter())
+        .setClient(new OkClient(okHttpClient))
+        .setLogLevel(retrofitLogLevel)
+        .setLog(new Slf4jRetrofitLogger(Front50Service.class))
+        .build()
+        .create(Front50Service.class);
   }
 }

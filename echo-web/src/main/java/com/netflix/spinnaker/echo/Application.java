@@ -20,20 +20,17 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.gson.GsonAutoConfiguration;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.web.support.SpringBootServletInitializer;
+import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * Application entry point.
- */
+/** Application entry point. */
 @Configuration
-@EnableAutoConfiguration
-@ComponentScan({
-  "com.netflix.spinnaker.echo.config",
-  "com.netflix.spinnaker.config"
-})
+@EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, GsonAutoConfiguration.class})
+@ComponentScan({"com.netflix.spinnaker.echo.config", "com.netflix.spinnaker.config"})
 public class Application extends SpringBootServletInitializer {
   private static final Map<String, Object> DEFAULT_PROPS = buildDefaults();
 
@@ -42,7 +39,7 @@ public class Application extends SpringBootServletInitializer {
     defaults.put("netflix.environment", "test");
     defaults.put("netflix.account", "${netflix.environment}");
     defaults.put("netflix.stack", "test");
-    defaults.put("spring.config.location", "${user.home}/.spinnaker/");
+    defaults.put("spring.config.additional-location", "${user.home}/.spinnaker/");
     defaults.put("spring.application.name", "echo");
     defaults.put("spring.config.name", "spinnaker,${spring.application.name}");
     defaults.put("spring.profiles.active", "${netflix.environment},local");
@@ -50,6 +47,7 @@ public class Application extends SpringBootServletInitializer {
   }
 
   public static void main(String... args) {
+    System.setProperty("spring.main.allow-bean-definition-overriding", "true");
     new SpringApplicationBuilder().properties(DEFAULT_PROPS).sources(Application.class).run(args);
   }
 

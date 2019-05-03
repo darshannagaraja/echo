@@ -17,82 +17,87 @@
 package com.netflix.spinnaker.echo.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.netflix.spinnaker.echo.artifacts.MessageArtifactTranslator;
 import com.netflix.spinnaker.echo.config.GooglePubsubProperties.GooglePubsubSubscription;
+import com.netflix.spinnaker.echo.pubsub.PubsubEventCreator;
 import com.netflix.spinnaker.echo.pubsub.PubsubMessageHandler;
 import com.netflix.spinnaker.echo.pubsub.PubsubPublishers;
 import com.netflix.spinnaker.echo.pubsub.PubsubSubscribers;
 import com.netflix.spinnaker.echo.pubsub.google.GooglePubsubPublisher;
 import com.netflix.spinnaker.echo.pubsub.google.GooglePubsubSubscriber;
+import com.netflix.spinnaker.echo.pubsub.model.EventCreator;
 import com.netflix.spinnaker.echo.pubsub.model.PubsubPublisher;
 import com.netflix.spinnaker.echo.pubsub.model.PubsubSubscriber;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
 import javax.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @Slf4j
 @ConditionalOnExpression("${pubsub.enabled:false} && ${pubsub.google.enabled:false}")
 @EnableConfigurationProperties(GooglePubsubProperties.class)
+@RequiredArgsConstructor
 public class GooglePubsubConfig {
-
-  @Autowired
-  private PubsubSubscribers pubsubSubscribers;
-
-  @Autowired
-  private PubsubPublishers pubsubPublishers;
-
-  @Autowired
-  private PubsubMessageHandler pubsubMessageHandler;
-
-  @Valid
-  @Autowired
-  private GooglePubsubProperties googlePubsubProperties;
-
-  @Autowired
-  ObjectMapper mapper;
-
-  @Autowired
-  private ApplicationEventPublisher applicationEventPublisher;
+  private final PubsubSubscribers pubsubSubscribers;
+  private final PubsubPublishers pubsubPublishers;
+  private final PubsubMessageHandler.Factory pubsubMessageHandlerFactory;
+  @Valid private final GooglePubsubProperties googlePubsubProperties;
+  private final ObjectMapper mapper;
+  private final MessageArtifactTranslator.Factory messageArtifactTranslatorFactory;
 
   @PostConstruct
   void googlePubsubSubscribers() {
     log.info("Creating Google Pubsub Subscribers");
     List<PubsubSubscriber> newSubscribers = new ArrayList<>();
-    googlePubsubProperties.getSubscriptions().forEach((GooglePubsubSubscription subscription) -> {
-      log.info("Bootstrapping Google Pubsub Subscriber listening to subscription: {} in project: {}",
-          subscription.getSubscriptionName(),
-          subscription.getProject());
-      GooglePubsubSubscriber subscriber = GooglePubsubSubscriber
-        .buildSubscriber(subscription, pubsubMessageHandler, applicationEventPublisher);
+    googlePubsubProperties
+        .getSubscriptions()
+        .forEach(
+            (GooglePubsubSubscription subscription) -> {
+              log.info(
+                  "Bootstrapping Google Pubsub Subscriber listening to subscription: {} in project: {}",
+                  subscription.getSubscriptionName(),
+                  subscription.getProject());
 
-      newSubscribers.add(subscriber);
-    });
+              Optional<MessageArtifactTranslator> messageArtifactTranslator =
+                  Optional.ofNullable(subscription.readTemplatePath())
+                      .map(messageArtifactTranslatorFactory::createJinja);
+              EventCreator eventCreator = new PubsubEventCreator(messageArtifactTranslator);
+              PubsubMessageHandler pubsubMessageHandler =
+                  pubsubMessageHandlerFactory.create(eventCreator);
+
+              GooglePubsubSubscriber subscriber =
+                  GooglePubsubSubscriber.buildSubscriber(subscription, pubsubMessageHandler);
+
+              newSubscribers.add(subscriber);
+            });
     pubsubSubscribers.putAll(newSubscribers);
   }
 
   @PostConstruct
   void googlePubsubPublishers() throws IOException {
     log.info("Creating Google Pubsub Publishers");
-    List<PubsubPublisher> newPublishers = googlePubsubProperties.getPublishers()
-      .stream()
-      .map(publisherConfig -> {
-        log.info(
-          "Bootstrapping Google Pubsub Publisher named {} on topic {} in project {} publishing content {}",
-          publisherConfig.getName(),
-          publisherConfig.getTopicName(),
-          publisherConfig.getProject(),
-          publisherConfig.getContent());
-        return GooglePubsubPublisher.buildPublisher(publisherConfig, mapper);
-      }).collect(Collectors.toList());
+    List<PubsubPublisher> newPublishers =
+        googlePubsubProperties.getPublishers().stream()
+            .map(
+                publisherConfig -> {
+                  log.info(
+                      "Bootstrapping Google Pubsub Publisher named {} on topic {} in project {} publishing content {}",
+                      publisherConfig.getName(),
+                      publisherConfig.getTopicName(),
+                      publisherConfig.getProject(),
+                      publisherConfig.getContent());
+                  return GooglePubsubPublisher.buildPublisher(publisherConfig, mapper);
+                })
+            .collect(Collectors.toList());
 
     pubsubPublishers.putAll(newPublishers);
   }

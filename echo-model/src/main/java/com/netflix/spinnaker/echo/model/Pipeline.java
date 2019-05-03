@@ -21,78 +21,72 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 import com.netflix.spinnaker.kork.artifacts.model.Artifact;
 import com.netflix.spinnaker.kork.artifacts.model.ExpectedArtifact;
-import lombok.*;
-import lombok.experimental.Wither;
-
 import java.util.List;
 import java.util.Map;
+import lombok.*;
+import lombok.experimental.Wither;
 
 @JsonDeserialize(builder = Pipeline.PipelineBuilder.class)
 @Builder
 @Wither
-@ToString(of = {"application", "name", "id"}, includeFieldNames = false)
+@ToString(
+    of = {"application", "name", "id"},
+    includeFieldNames = false)
 @Value
 public class Pipeline {
-  @JsonProperty
-  @NonNull String application;
+  @JsonProperty @NonNull String application;
 
-  @JsonProperty
-  Object config;
+  @JsonProperty Object config;
 
-  @JsonProperty
-  @NonNull String name;
+  @JsonProperty @NonNull String name;
 
-  @JsonProperty
-  String id;
+  @JsonProperty String id;
 
-  @JsonProperty
-  String executionEngine;
+  @JsonProperty String executionEngine;
 
-  @JsonProperty
-  boolean parallel;
+  @JsonProperty boolean parallel;
 
-  @JsonProperty
-  boolean disabled;
+  @JsonProperty boolean disabled;
 
-  @JsonProperty
-  boolean limitConcurrent;
+  @JsonProperty boolean limitConcurrent;
 
-  @JsonProperty
-  boolean keepWaitingPipelines;
+  @JsonProperty boolean keepWaitingPipelines;
 
-  @JsonProperty
-  boolean plan;
+  @JsonProperty boolean plan;
 
-  @JsonProperty
-  boolean respectQuietPeriod;
+  @JsonProperty boolean respectQuietPeriod;
 
-  @JsonProperty
-  List<Trigger> triggers;
+  @JsonProperty List<Trigger> triggers;
 
-  @JsonProperty
-  String type;
+  @JsonProperty String type;
 
-  @JsonProperty
-  List<Map<String, Object>> stages;
+  @JsonProperty String schema;
 
-  @JsonProperty
-  List<Map<String, Object>> notifications;
+  @JsonProperty Object template;
 
-  @JsonProperty
-  List<Artifact> receivedArtifacts;
+  @JsonProperty List<Map<String, Object>> stages;
 
-  @JsonProperty
-  List<ExpectedArtifact> expectedArtifacts;
+  @JsonProperty List<Map<String, Object>> notifications;
 
-  @JsonProperty
-  List<Map<String, Object>> parameterConfig;
+  @JsonProperty List<Artifact> receivedArtifacts;
 
-  @JsonProperty
-  Object appConfig;
+  @JsonProperty List<ExpectedArtifact> expectedArtifacts;
+
+  @JsonProperty List<Map<String, Object>> parameterConfig;
+
+  @JsonProperty Object appConfig;
 
   Trigger trigger;
 
   @JsonPOJOBuilder(withPrefix = "")
   public static final class PipelineBuilder {
+    @JsonProperty("config")
+    private void unpackConfig(Map<String, Object> config) {
+      if (config == null) {
+        return;
+      }
+      this.config = config;
+      schema = (String) config.get("schema");
+    }
   }
 }

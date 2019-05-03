@@ -26,27 +26,35 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import retrofit.Endpoint;
 import retrofit.Endpoints;
+import retrofit.RequestInterceptor;
 import retrofit.RestAdapter.Builder;
 import retrofit.RestAdapter.LogLevel;
+import retrofit.converter.JacksonConverter;
 
 @Configuration
 @ConditionalOnProperty("igor.enabled")
 @Slf4j
 public class IgorConfig {
   @Bean
-  public Endpoint igorEndpoint(@Value("${igor.baseUrl}") String igorBaseUrl) {
+  public Endpoint igorEndpoint(@Value("${igor.base-url}") String igorBaseUrl) {
     return Endpoints.newFixedEndpoint(igorBaseUrl);
   }
 
   @Bean
-  public IgorService igorService(Endpoint igorEndpoint, Ok3Client ok3Client,
-    LogLevel retrofitLogLevel) {
+  public IgorService igorService(
+      Endpoint igorEndpoint,
+      Ok3Client ok3Client,
+      LogLevel retrofitLogLevel,
+      RequestInterceptor spinnakerRequestInterceptor) {
     log.info("igor service loaded");
     return new Builder()
-      .setEndpoint(igorEndpoint)
-      .setClient(ok3Client)
-      .setLogLevel(retrofitLogLevel)
-      .setLog(new Slf4jRetrofitLogger(IgorService.class)).build()
-      .create(IgorService.class);
+        .setEndpoint(igorEndpoint)
+        .setConverter(new JacksonConverter())
+        .setClient(ok3Client)
+        .setRequestInterceptor(spinnakerRequestInterceptor)
+        .setLogLevel(retrofitLogLevel)
+        .setLog(new Slf4jRetrofitLogger(IgorService.class))
+        .build()
+        .create(IgorService.class);
   }
 }

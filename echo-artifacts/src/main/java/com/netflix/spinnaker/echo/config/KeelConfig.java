@@ -12,30 +12,32 @@ import retrofit.Endpoint;
 import retrofit.Endpoints;
 import retrofit.RestAdapter;
 import retrofit.RestAdapter.LogLevel;
+import retrofit.converter.JacksonConverter;
 
 @Configuration
 @Slf4j
 @ConditionalOnExpression("${keel.enabled:false}")
 public class KeelConfig {
   @Bean
-  public LogLevel retrofitLogLevel(@Value("${retrofit.logLevel:BASIC}") String retrofitLogLevel) {
+  public LogLevel retrofitLogLevel(@Value("${retrofit.log-level:BASIC}") String retrofitLogLevel) {
     return LogLevel.valueOf(retrofitLogLevel);
   }
 
   @Bean
-  public Endpoint keelEndpoint(@Value("${keel.baseUrl}") String keelBaseUrl) {
+  public Endpoint keelEndpoint(@Value("${keel.base-url}") String keelBaseUrl) {
     return Endpoints.newFixedEndpoint(keelBaseUrl);
   }
 
   @Bean
-  public KeelService keelService(Endpoint keelEndpoint,
-                                 Ok3Client ok3Client,
-                                 LogLevel retrofitLogLevel) {
+  public KeelService keelService(
+      Endpoint keelEndpoint, Ok3Client ok3Client, LogLevel retrofitLogLevel) {
     return new RestAdapter.Builder()
-      .setEndpoint(keelEndpoint)
-      .setClient(ok3Client)
-      .setLogLevel(retrofitLogLevel)
-      .setLog(new Slf4jRetrofitLogger(KeelService.class)).build()
-      .create(KeelService.class);
+        .setEndpoint(keelEndpoint)
+        .setConverter(new JacksonConverter())
+        .setClient(ok3Client)
+        .setLogLevel(retrofitLogLevel)
+        .setLog(new Slf4jRetrofitLogger(KeelService.class))
+        .build()
+        .create(KeelService.class);
   }
 }

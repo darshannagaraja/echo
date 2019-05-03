@@ -22,24 +22,20 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spectator.api.NoopRegistry
 import com.netflix.spinnaker.echo.model.Pipeline
 import com.netflix.spinnaker.echo.model.Trigger
+import com.netflix.spinnaker.echo.pipelinetriggers.orca.OrcaService
 import com.netflix.spinnaker.echo.services.Front50Service
 import com.netflix.spinnaker.echo.test.RetrofitStubs
 import spock.lang.Shared
 import spock.lang.Specification
 import spock.lang.Subject
-import spock.lang.Unroll
 
-import java.util.concurrent.Callable
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
-
-import static java.util.concurrent.TimeUnit.SECONDS
 
 class PipelineCacheSpec extends Specification implements RetrofitStubs {
   def front50 = Mock(Front50Service)
+  def orca = Mock(OrcaService)
   def registry = new NoopRegistry()
+  def objectMapper = new ObjectMapper()
 
   @Shared
   def interval = 30
@@ -48,13 +44,19 @@ class PipelineCacheSpec extends Specification implements RetrofitStubs {
   def sleepMs = 100
 
   @Subject
-  def pipelineCache = new PipelineCache(Mock(ScheduledExecutorService), interval, sleepMs, front50, registry)
+  def pipelineCache = new PipelineCache(Mock(ScheduledExecutorService), interval, sleepMs, objectMapper, front50, orca, registry)
 
   def "keeps polling if Front50 returns an error"() {
     given:
+    def pipelineMap = [
+      application: 'application',
+      name       : 'Pipeline',
+      id         : 'P1'
+    ]
     def pipeline = Pipeline.builder().application('application').name('Pipeline').id('P1').build()
+
     def initialLoad = []
-    front50.getPipelines() >> initialLoad >> { throw unavailable() } >> [pipeline]
+    front50.getPipelines() >> initialLoad >> { throw unavailable() } >> [pipelineMap]
     pipelineCache.start()
 
     expect: 'null pipelines when we have not polled yet'
@@ -111,6 +113,51 @@ class PipelineCacheSpec extends Specification implements RetrofitStubs {
 
     then:
     notThrown(JsonMappingException)
+  }
+
+  def "disabled triggers and triggers for disabled pipelines do not appear in trigger index"() {
+    given:
+    Trigger enabledTrigger = Trigger.builder().type('git').enabled(true).build()
+    Trigger disabledTrigger = Trigger.builder().type('jenkins').enabled(false).build()
+
+    def enabledPipeline = Pipeline.builder().application('app').name('pipe').id('enabledPipeId').disabled(false)
+      .triggers([enabledTrigger, disabledTrigger]).build()
+    def disabledPipeline = Pipeline.builder().application('app').name('pipe').id('disabledPipedId').disabled(true)
+      .triggers([enabledTrigger]).build()
+
+    def pipelines = [enabledPipeline, disabledPipeline]
+
+    when:
+    def triggers = PipelineCache.extractEnabledTriggersFrom(PipelineCache.decorateTriggers(pipelines))
+
+    then: 'we only get the enabled trigger for the enabled pipeline'
+    triggers.size() == 1
+    triggers.get('git').size() == 1
+    triggers.get('git').first().parent.id == 'enabledPipeId'
+  }
+
+  def "trigger indexing supports pipelines with null triggers"() {
+    given:
+    def pipeline = Pipeline.builder().application('app').name('pipe').triggers(null).build()
+
+    when:
+    def triggers = PipelineCache.extractEnabledTriggersFrom(PipelineCache.decorateTriggers([pipeline]))
+
+    then:
+    triggers.isEmpty()
+  }
+
+  def "trigger indexing supports triggers with null type"() {
+    given:
+    def pipeline = Pipeline.builder().application('app').name('pipe').triggers(
+      [Trigger.builder().type(null).enabled(true).build()]
+    ).build()
+
+    when:
+    def triggers = PipelineCache.extractEnabledTriggersFrom(PipelineCache.decorateTriggers([pipeline]))
+
+    then:
+    triggers.isEmpty()
   }
 }
 

@@ -16,6 +16,8 @@
 
 package com.netflix.spinnaker.echo.config;
 
+import static retrofit.Endpoints.newFixedEndpoint;
+
 import com.netflix.spinnaker.echo.pagerduty.PagerDutyService;
 import com.netflix.spinnaker.retrofit.Slf4jRetrofitLogger;
 import org.slf4j.Logger;
@@ -26,11 +28,10 @@ import org.springframework.context.annotation.Configuration;
 import retrofit.Endpoint;
 import retrofit.RestAdapter;
 import retrofit.client.Client;
-
-import static retrofit.Endpoints.newFixedEndpoint;
+import retrofit.converter.JacksonConverter;
 
 @Configuration
-@ConditionalOnProperty("pagerDuty.enabled")
+@ConditionalOnProperty("pager-duty.enabled")
 public class PagerDutyConfig {
   private static final Logger log = LoggerFactory.getLogger(PagerDutyConfig.class);
 
@@ -40,17 +41,17 @@ public class PagerDutyConfig {
   }
 
   @Bean
-  PagerDutyService pagerDutyService(Endpoint pagerDutyEndpoint,
-                                    Client retrofitClient,
-                                    RestAdapter.LogLevel retrofitLogLevel) {
+  PagerDutyService pagerDutyService(
+      Endpoint pagerDutyEndpoint, Client retrofitClient, RestAdapter.LogLevel retrofitLogLevel) {
     log.info("Pager Duty service loaded");
 
     return new RestAdapter.Builder()
-      .setEndpoint(pagerDutyEndpoint)
-      .setClient(retrofitClient)
-      .setLogLevel(retrofitLogLevel)
-      .setLog(new Slf4jRetrofitLogger(PagerDutyService.class))
-      .build()
-      .create(PagerDutyService.class);
+        .setEndpoint(pagerDutyEndpoint)
+        .setConverter(new JacksonConverter())
+        .setClient(retrofitClient)
+        .setLogLevel(retrofitLogLevel)
+        .setLog(new Slf4jRetrofitLogger(PagerDutyService.class))
+        .build()
+        .create(PagerDutyService.class);
   }
 }

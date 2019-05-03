@@ -21,9 +21,19 @@ import com.netflix.spectator.api.Registry;
 import com.netflix.spinnaker.echo.model.Pipeline;
 import com.netflix.spinnaker.echo.pipelinetriggers.QuietPeriodIndicator;
 import com.netflix.spinnaker.echo.pipelinetriggers.orca.OrcaService.TriggerResponse;
+import com.netflix.spinnaker.fiat.model.Authorization;
+import com.netflix.spinnaker.fiat.model.UserPermission;
+import com.netflix.spinnaker.fiat.model.resources.Account;
+import com.netflix.spinnaker.fiat.shared.FiatPermissionEvaluator;
 import com.netflix.spinnaker.fiat.shared.FiatStatus;
 import com.netflix.spinnaker.security.AuthenticatedRequest;
 import com.netflix.spinnaker.security.User;
+import java.util.Collections;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -37,19 +47,16 @@ import retrofit.client.Response;
 import rx.Observable;
 import rx.functions.Func1;
 
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
-
-/**
- * Triggers a {@link Pipeline} by invoking _Orca_.
- */
+/** Triggers a {@link Pipeline} by invoking _Orca_. */
 @Component
 @Slf4j
 public class PipelineInitiator {
 
   private final Registry registry;
   private final OrcaService orca;
+  private final FiatPermissionEvaluator fiatPermissionEvaluator;
   private final FiatStatus fiatStatus;
+
   private final ObjectMapper objectMapper;
   private final QuietPeriodIndicator quietPeriodIndicator;
   private final boolean enabled;
@@ -57,16 +64,19 @@ public class PipelineInitiator {
   private final long retryDelayMillis;
 
   @Autowired
-  public PipelineInitiator(@NonNull Registry registry,
-                           @NonNull OrcaService orca,
-                           @NonNull FiatStatus fiatStatus,
-                           ObjectMapper objectMapper,
-                           @NonNull QuietPeriodIndicator quietPeriodIndicator,
-                           @Value("${orca.enabled:true}") boolean enabled,
-                           @Value("${orca.pipelineInitiatorRetryCount:5}") int retryCount,
-                           @Value("${orca.pipelineInitiatorRetryDelayMillis:5000}") long retryDelayMillis) {
+  public PipelineInitiator(
+      @NonNull Registry registry,
+      @NonNull OrcaService orca,
+      @NonNull Optional<FiatPermissionEvaluator> fiatPermissionEvaluator,
+      @NonNull FiatStatus fiatStatus,
+      ObjectMapper objectMapper,
+      @NonNull QuietPeriodIndicator quietPeriodIndicator,
+      @Value("${orca.enabled:true}") boolean enabled,
+      @Value("${orca.pipeline-initiator-retry-count:5}") int retryCount,
+      @Value("${orca.pipeline-initiator-retry-delay-millis:5000}") long retryDelayMillis) {
     this.registry = registry;
     this.orca = orca;
+    this.fiatPermissionEvaluator = fiatPermissionEvaluator.orElse(null);
     this.fiatStatus = fiatStatus;
     this.objectMapper = objectMapper;
     this.quietPeriodIndicator = quietPeriodIndicator;
@@ -84,55 +94,75 @@ public class PipelineInitiator {
 
   public void startPipeline(Pipeline pipeline) {
     if (enabled) {
-      if (pipeline.getTrigger() != null &&
-          pipeline.isRespectQuietPeriod() &&
-          quietPeriodIndicator.inQuietPeriod(System.currentTimeMillis(), pipeline.getTrigger().getType())) {
-        log.info("Would trigger {} due to {} but pipeline is set to ignore automatic triggers during quiet periods", pipeline, pipeline.getTrigger());
-      } else {
-        log.info("Triggering {} due to {}", pipeline, pipeline.getTrigger());
+      try {
+        if (pipeline.getTrigger() != null
+            && pipeline.isRespectQuietPeriod()
+            && quietPeriodIndicator.inQuietPeriod(
+                System.currentTimeMillis(), pipeline.getTrigger().getType())) {
+          log.info(
+              "Would trigger {} due to {} but pipeline is set to ignore automatic triggers during quiet periods",
+              pipeline,
+              pipeline.getTrigger());
+        } else {
+          log.info("Triggering {} due to {}", pipeline, pipeline.getTrigger());
 
-        final String templatedPipelineType = "templatedPipeline";
-        if (templatedPipelineType.equals(pipeline.getType())) { // TODO(jacobkiefer): Constantize.
-          // We need to store and re-set the propagateAuth flag, as it is ignored on deserialization
-          // TODO(ezimanyi): Find a better way to pass the propagateAuth flag than on the trigger itself
-          boolean propagateAuth = pipeline.getTrigger() != null && pipeline.getTrigger().isPropagateAuth();
-          log.debug("Planning templated pipeline {} before triggering", pipeline.getId());
-          pipeline = pipeline.withPlan(true);
-          Map resolvedPipelineMap = orca.plan(objectMapper.convertValue(pipeline, Map.class), true);
-          pipeline = objectMapper.convertValue(resolvedPipelineMap, Pipeline.class);
-          if (propagateAuth) {
-            pipeline = pipeline.withTrigger(pipeline.getTrigger().atPropagateAuth(true));
+          final String templatedPipelineType = "templatedPipeline";
+          if (templatedPipelineType.equals(pipeline.getType())) { // TODO(jacobkiefer): Constantize.
+            // We need to store and re-set the propagateAuth flag, as it is ignored on
+            // deserialization
+            // TODO(ezimanyi): Find a better way to pass the propagateAuth flag than on the trigger
+            // itself
+            boolean propagateAuth =
+                pipeline.getTrigger() != null && pipeline.getTrigger().isPropagateAuth();
+            log.debug("Planning templated pipeline {} before triggering", pipeline.getId());
+            pipeline = pipeline.withPlan(true);
+            Map resolvedPipelineMap =
+                orca.plan(objectMapper.convertValue(pipeline, Map.class), true);
+            pipeline = objectMapper.convertValue(resolvedPipelineMap, Pipeline.class);
+            if (propagateAuth) {
+              pipeline = pipeline.withTrigger(pipeline.getTrigger().atPropagateAuth(true));
+            }
           }
+          triggerPipeline(pipeline);
+          registry.counter("orca.requests").increment();
         }
-        triggerPipeline(pipeline);
-        registry.counter("orca.requests").increment();
+      } catch (Exception e) {
+        registry.counter("orca.errors", "exception", e.getClass().getName()).increment();
+        log.error("Unable to trigger pipeline {}: {}", pipeline, e);
       }
     } else {
-      log.info("Would trigger {} due to {} but triggering is disabled", pipeline, pipeline.getTrigger());
+      log.info(
+          "Would trigger {} due to {} but triggering is disabled", pipeline, pipeline.getTrigger());
     }
   }
 
-  private void triggerPipeline(Pipeline pipeline) {
-    Observable<OrcaService.TriggerResponse> orcaResponse = createTriggerObservable(pipeline)
-      .retryWhen(new RetryWithDelay(retryCount, retryDelayMillis))
-      .doOnNext(this::onOrcaResponse)
-      .doOnError(throwable -> onOrcaError(pipeline, throwable));
+  private void triggerPipeline(Pipeline pipeline) throws Exception {
+    Observable<OrcaService.TriggerResponse> orcaResponse =
+        createTriggerObservable(pipeline)
+            .retryWhen(new RetryWithDelay(retryCount, retryDelayMillis))
+            .doOnNext(this::onOrcaResponse)
+            .doOnError(throwable -> onOrcaError(pipeline, throwable));
 
     if (pipeline.getTrigger() != null && pipeline.getTrigger().isPropagateAuth()) {
-      // If the trigger is one that should propagate authentication, just directly call Orca as the request interceptor
+      // If the trigger is one that should propagate authentication, just directly call Orca as the
+      // request interceptor
       // will pass along the current headers.
       orcaResponse.subscribe();
     } else {
       // If we should not propagate authentication, create an empty User object for the request
       User korkUser = new User();
-      if (fiatStatus.isEnabled() && pipeline.getTrigger() != null) {
-        korkUser.setEmail(pipeline.getTrigger().getRunAsUser());
+      if (fiatStatus.isEnabled()) {
+        if (pipeline.getTrigger() != null && pipeline.getTrigger().getRunAsUser() != null) {
+          korkUser.setEmail(pipeline.getTrigger().getRunAsUser());
+        } else {
+          // consistent with the existing pattern of
+          // `AuthenticatedRequest.getSpinnakerUser().orElse("anonymous")`
+          // and defaulting to `anonymous` throughout all Spinnaker services
+          korkUser.setEmail("anonymous");
+        }
+        korkUser.setAllowedAccounts(getAllowedAccountsForUser(korkUser.getEmail()));
       }
-      try {
-        AuthenticatedRequest.propagate(() -> orcaResponse.subscribe(), korkUser).call();
-      } catch (Exception e) {
-        log.error("Unable to trigger pipeline {}: {}", pipeline, e);
-      }
+      AuthenticatedRequest.propagate(() -> orcaResponse.subscribe(), korkUser).call();
     }
   }
 
@@ -147,6 +177,36 @@ public class PipelineInitiator {
   private void onOrcaError(Pipeline pipeline, Throwable error) {
     registry.counter("orca.errors", "exception", error.getClass().getName()).increment();
     log.error("Error triggering pipeline: {}", pipeline, error);
+  }
+
+  /**
+   * The set of accounts that a user has WRITE access to.
+   *
+   * <p>Similar filtering can be found in `gate` (see AllowedAccountsSupport.java).
+   *
+   * @param user A service account name (or 'anonymous' if not specified)
+   * @return the allowed accounts for {@param user} as determined by fiat
+   */
+  private Set<String> getAllowedAccountsForUser(String user) {
+    if (fiatPermissionEvaluator == null || !fiatStatus.isLegacyFallbackEnabled()) {
+      return Collections.emptySet();
+    }
+
+    UserPermission.View userPermission = null;
+    try {
+      userPermission = fiatPermissionEvaluator.getPermission(user);
+    } catch (Exception e) {
+      log.error("Unable to fetch permission for {}", user, e);
+    }
+
+    if (userPermission == null) {
+      return Collections.emptySet();
+    }
+
+    return userPermission.getAccounts().stream()
+        .filter(v -> v.getAuthorizations().contains(Authorization.WRITE))
+        .map(Account.View::getName)
+        .collect(Collectors.toSet());
   }
 
   private static boolean isRetryable(Throwable error) {
@@ -167,7 +227,8 @@ public class PipelineInitiator {
     return false;
   }
 
-  private static class RetryWithDelay implements Func1<Observable<? extends Throwable>, Observable<?>> {
+  private static class RetryWithDelay
+      implements Func1<Observable<? extends Throwable>, Observable<?>> {
 
     private final int maxRetries;
     private final long retryDelayMillis;
@@ -181,14 +242,15 @@ public class PipelineInitiator {
 
     @Override
     public Observable<?> call(Observable<? extends Throwable> attempts) {
-      return attempts
-        .flatMap((Func1<Throwable, Observable<?>>) throwable -> {
-          if (isRetryable(throwable) && ++retryCount < maxRetries) {
-            log.error("Retrying pipeline trigger, attempt {}/{}", retryCount, maxRetries);
-            return Observable.timer(retryDelayMillis, TimeUnit.MILLISECONDS);
-          }
-          return Observable.error(throwable);
-        });
+      return attempts.flatMap(
+          (Func1<Throwable, Observable<?>>)
+              throwable -> {
+                if (isRetryable(throwable) && ++retryCount < maxRetries) {
+                  log.error("Retrying pipeline trigger, attempt {}/{}", retryCount, maxRetries);
+                  return Observable.timer(retryDelayMillis, TimeUnit.MILLISECONDS);
+                }
+                return Observable.error(throwable);
+              });
     }
   }
 }

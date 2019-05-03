@@ -14,33 +14,40 @@
 
 package com.netflix.spinnaker.echo.pipelinetriggers.eventhandlers;
 
+import static com.netflix.spinnaker.echo.pipelinetriggers.artifacts.ArtifactMatcher.isConstraintInPayload;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.spectator.api.Registry;
 import com.netflix.spinnaker.echo.model.Pipeline;
 import com.netflix.spinnaker.echo.model.Trigger;
 import com.netflix.spinnaker.echo.model.trigger.WebhookEvent;
-import com.netflix.spinnaker.echo.pipelinetriggers.artifacts.ArtifactMatcher;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
-
+import com.netflix.spinnaker.kork.artifacts.model.Artifact;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
-
-import static com.netflix.spinnaker.echo.pipelinetriggers.artifacts.ArtifactMatcher.isConstraintInPayload;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
- * Implementation of TriggerEventHandler for events of type {@link WebhookEvent}, which occur when
- * a webhook is received.
+ * Implementation of TriggerEventHandler for events of type {@link WebhookEvent}, which occur when a
+ * webhook is received.
  */
 @Component
 public class WebhookEventHandler extends BaseTriggerEventHandler<WebhookEvent> {
   private static final String TRIGGER_TYPE = "webhook";
+  private static final List<String> supportedTriggerTypes = Collections.singletonList(TRIGGER_TYPE);
 
   @Autowired
   public WebhookEventHandler(Registry registry, ObjectMapper objectMapper) {
     super(registry, objectMapper);
+  }
+
+  @Override
+  public List<String> supportedTriggerTypes() {
+    return supportedTriggerTypes;
   }
 
   @Override
@@ -59,15 +66,15 @@ public class WebhookEventHandler extends BaseTriggerEventHandler<WebhookEvent> {
   }
 
   @Override
-  protected Function<Trigger, Pipeline> buildTrigger(Pipeline pipeline, WebhookEvent webhookEvent) {
+  protected Function<Trigger, Trigger> buildTrigger(WebhookEvent webhookEvent) {
     WebhookEvent.Content content = webhookEvent.getContent();
     Map payload = webhookEvent.getPayload();
 
-    return trigger -> pipeline
-        .withReceivedArtifacts(content.getArtifacts())
-        .withTrigger(trigger.atParameters(content.getParameters())
-          .atPayload(payload)
-          .atEventId(webhookEvent.getEventId()));
+    return trigger ->
+        trigger
+            .atParameters(content.getParameters())
+            .atPayload(payload)
+            .atEventId(webhookEvent.getEventId());
   }
 
   @Override
@@ -76,25 +83,25 @@ public class WebhookEventHandler extends BaseTriggerEventHandler<WebhookEvent> {
   }
 
   @Override
-  protected Predicate<Trigger> matchTriggerFor(WebhookEvent webhookEvent, Pipeline pipeline) {
+  protected Predicate<Trigger> matchTriggerFor(WebhookEvent webhookEvent) {
     final String type = webhookEvent.getDetails().getType();
     final String source = webhookEvent.getDetails().getSource();
 
     return trigger ->
-        trigger.getType() != null && trigger.getType().equalsIgnoreCase(type) &&
-        trigger.getSource() != null && trigger.getSource().equals(source) &&
-        (
+        trigger.getType() != null
+            && trigger.getType().equalsIgnoreCase(type)
+            && trigger.getSource() != null
+            && trigger.getSource().equals(source)
+            && (
             // The Constraints in the Trigger could be null. That's OK.
-            trigger.getPayloadConstraints() == null ||
+            trigger.getPayloadConstraints() == null
+                ||
 
-            // If the Constraints are present, check that there are equivalents in the webhook payload.
-            (  trigger.getPayloadConstraints() != null &&
-               isConstraintInPayload(trigger.getPayloadConstraints(), webhookEvent.getPayload())
-            )
-
-        ) &&
-        // note this returns true when no artifacts are expected
-        ArtifactMatcher.anyArtifactsMatchExpected(webhookEvent.getContent().getArtifacts(), trigger, pipeline);
+                // If the Constraints are present, check that there are equivalents in the webhook
+                // payload.
+                (trigger.getPayloadConstraints() != null
+                    && isConstraintInPayload(
+                        trigger.getPayloadConstraints(), webhookEvent.getPayload())));
   }
 
   @Override
@@ -103,5 +110,9 @@ public class WebhookEventHandler extends BaseTriggerEventHandler<WebhookEvent> {
     tags.put("type", pipeline.getTrigger().getType());
     return tags;
   }
-}
 
+  @Override
+  protected List<Artifact> getArtifactsFromEvent(WebhookEvent webhookEvent, Trigger trigger) {
+    return webhookEvent.getContent().getArtifacts();
+  }
+}

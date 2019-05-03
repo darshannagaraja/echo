@@ -2,8 +2,8 @@ package com.netflix.spinnaker.echo.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.spectator.api.Registry;
-import com.netflix.spinnaker.echo.pipelinetriggers.orca.OrcaService;
 import com.netflix.spinnaker.echo.pipelinetriggers.eventhandlers.PubsubEventHandler;
+import com.netflix.spinnaker.echo.pipelinetriggers.orca.OrcaService;
 import com.netflix.spinnaker.fiat.shared.FiatClientConfigurationProperties;
 import com.netflix.spinnaker.fiat.shared.FiatStatus;
 import com.netflix.spinnaker.kork.dynamicconfig.DynamicConfigService;
@@ -15,7 +15,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.*;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Configuration;
 import retrofit.RequestInterceptor;
 import retrofit.RestAdapter;
 import retrofit.RestAdapter.LogLevel;
@@ -42,7 +44,7 @@ public class PipelineTriggerConfiguration {
   }
 
   @Bean
-  public OrcaService orca(@Value("${orca.baseUrl}") final String endpoint) {
+  public OrcaService orca(@Value("${orca.base-url}") final String endpoint) {
     return bindRetrofitService(OrcaService.class, endpoint);
   }
 
@@ -52,9 +54,10 @@ public class PipelineTriggerConfiguration {
   }
 
   @Bean
-  public FiatStatus fiatStatus(Registry registry,
-                               DynamicConfigService dynamicConfigService,
-                               FiatClientConfigurationProperties fiatClientConfigurationProperties) {
+  public FiatStatus fiatStatus(
+      Registry registry,
+      DynamicConfigService dynamicConfigService,
+      FiatClientConfigurationProperties fiatClientConfigurationProperties) {
     return new FiatStatus(registry, dynamicConfigService, fiatClientConfigurationProperties);
   }
 
@@ -65,7 +68,7 @@ public class PipelineTriggerConfiguration {
   }
 
   @Bean
-  @ConfigurationProperties(prefix = "quietPeriod")
+  @ConfigurationProperties(prefix = "quiet-period")
   public QuietPeriodIndicatorConfigurationProperties quietPeriodIndicatorConfigurationProperties() {
     return new QuietPeriodIndicatorConfigurationProperties();
   }
@@ -73,13 +76,14 @@ public class PipelineTriggerConfiguration {
   private <T> T bindRetrofitService(final Class<T> type, final String endpoint) {
     log.info("Connecting {} to {}", type.getSimpleName(), endpoint);
 
-    return new RestAdapter.Builder().setClient(retrofitClient)
-                                    .setRequestInterceptor(requestInterceptor)
-                                    .setConverter(new JacksonConverter(new ObjectMapper()))
-                                    .setEndpoint(endpoint)
-                                    .setLogLevel(LogLevel.BASIC)
-                                    .setLog(new Slf4jRetrofitLogger(type))
-                                    .build()
-                                    .create(type);
+    return new RestAdapter.Builder()
+        .setClient(retrofitClient)
+        .setRequestInterceptor(requestInterceptor)
+        .setConverter(new JacksonConverter(new ObjectMapper()))
+        .setEndpoint(endpoint)
+        .setLogLevel(LogLevel.BASIC)
+        .setLog(new Slf4jRetrofitLogger(type))
+        .build()
+        .create(type);
   }
 }

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.netflix.spinnaker.echo.pipelinetriggers.monitor
+package com.netflix.spinnaker.echo.pipelinetriggers.eventhandlers
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spectator.api.NoopRegistry
@@ -22,7 +22,6 @@ import com.netflix.spinnaker.echo.model.Metadata
 import com.netflix.spinnaker.echo.model.pubsub.MessageDescription
 import com.netflix.spinnaker.echo.model.pubsub.PubsubSystem
 import com.netflix.spinnaker.echo.model.trigger.PubsubEvent
-import com.netflix.spinnaker.echo.pipelinetriggers.eventhandlers.PubsubEventHandler
 import com.netflix.spinnaker.echo.test.RetrofitStubs
 import com.netflix.spinnaker.kork.artifacts.model.Artifact
 import com.netflix.spinnaker.kork.artifacts.model.ExpectedArtifact
@@ -35,9 +34,11 @@ import spock.lang.Unroll
 class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
   def registry = new NoopRegistry()
   def objectMapper = new ObjectMapper()
+  def handlerSupport = new EventHandlerSupport()
 
   @Shared
   def goodArtifacts = [new Artifact(name: 'myArtifact', type: 'artifactType')]
+  
   @Shared
   def badExpectedArtifacts = [
     new ExpectedArtifact(
@@ -78,7 +79,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
   def "triggers pipelines for successful builds for Google pubsub"() {
     given:
     def pipeline = createPipelineWith(goodExpectedArtifacts, trigger)
-    def pipelines = [pipeline]
+    def pipelines = handlerSupport.pipelineCache(pipeline)
 
     when:
     def matchingPipelines = eventHandler.getMatchingPipelines(event, pipelines)
@@ -99,7 +100,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
 
   def "attaches Google pubsub trigger to the pipeline"() {
     given:
-    def pipelines = [pipeline]
+    def pipelines = handlerSupport.pipelineCache(pipeline)
 
     when:
     def matchingPipelines = eventHandler.getMatchingPipelines(event, pipelines)
@@ -118,7 +119,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
   @Unroll
   def "does not trigger #description pipelines for Google pubsub"() {
     given:
-    def pipelines = [pipeline]
+    def pipelines = handlerSupport.pipelineCache(pipeline)
 
     when:
     def matchingPipelines = eventHandler.getMatchingPipelines(event, pipelines)
@@ -139,7 +140,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
   @Unroll
   def "does not trigger #description pipelines containing artifacts for Google pubsub"() {
     given:
-    def pipelines = [pipeline]
+    def pipelines = handlerSupport.pipelineCache(pipeline)
 
     when:
     def matchingPipelines = eventHandler.getMatchingPipelines(event, pipelines)
@@ -158,7 +159,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
   @Unroll
   def "does not trigger a pipeline that has an enabled pubsub trigger with missing #field"() {
     given:
-    def pipelines = [badPipeline, goodPipeline]
+    def pipelines = handlerSupport.pipelineCache(badPipeline, goodPipeline)
 
     when:
     def matchingPipelines = eventHandler.getMatchingPipelines(event, pipelines)
@@ -190,7 +191,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
       .build()
 
     def pipeline = createPipelineWith(goodExpectedArtifacts, trigger)
-    def pipelines = [pipeline]
+    def pipelines = handlerSupport.pipelineCache(pipeline)
 
     when:
     def content = new PubsubEvent.Content()
@@ -227,7 +228,7 @@ class PubsubEventHandlerSpec extends Specification implements RetrofitStubs {
       .build()
 
     def pipeline = createPipelineWith(goodExpectedArtifacts, trigger)
-    def pipelines = [pipeline]
+    def pipelines = handlerSupport.pipelineCache(pipeline)
 
     when:
     def content = new PubsubEvent.Content()

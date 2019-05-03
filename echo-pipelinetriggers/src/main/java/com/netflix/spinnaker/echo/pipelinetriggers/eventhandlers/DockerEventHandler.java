@@ -16,11 +16,8 @@
 
 package com.netflix.spinnaker.echo.pipelinetriggers.eventhandlers;
 
-import static com.netflix.spinnaker.echo.pipelinetriggers.artifacts.ArtifactMatcher.anyArtifactsMatchExpected;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.spectator.api.Registry;
-import com.netflix.spinnaker.echo.model.Pipeline;
 import com.netflix.spinnaker.echo.model.Trigger;
 import com.netflix.spinnaker.echo.model.trigger.DockerEvent;
 import com.netflix.spinnaker.kork.artifacts.model.Artifact;
@@ -34,16 +31,22 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * Implementation of TriggerEventHandler for events of type {@link DockerEvent}, which occur when
- * a new container is pushed to a docker registry.
+ * Implementation of TriggerEventHandler for events of type {@link DockerEvent}, which occur when a
+ * new container is pushed to a docker registry.
  */
 @Component
 public class DockerEventHandler extends BaseTriggerEventHandler<DockerEvent> {
   private static final String TRIGGER_TYPE = "docker";
+  private static final List<String> supportedTriggerTypes = Collections.singletonList(TRIGGER_TYPE);
 
   @Autowired
   public DockerEventHandler(Registry registry, ObjectMapper objectMapper) {
     super(registry, objectMapper);
+  }
+
+  @Override
+  public List<String> supportedTriggerTypes() {
+    return supportedTriggerTypes;
   }
 
   @Override
@@ -63,33 +66,32 @@ public class DockerEventHandler extends BaseTriggerEventHandler<DockerEvent> {
     return tag != null && !tag.isEmpty();
   }
 
-  private static List<Artifact> getArtifacts(DockerEvent dockerEvent) {
+  protected List<Artifact> getArtifactsFromEvent(DockerEvent dockerEvent, Trigger trigger) {
     DockerEvent.Content content = dockerEvent.getContent();
 
     String name = content.getRegistry() + "/" + content.getRepository();
     String reference = name + ":" + content.getTag();
-    return Collections.singletonList(Artifact.builder()
-      .type("docker/image")
-      .name(name)
-      .version(content.getTag())
-      .reference(reference)
-      .build());
+    return Collections.singletonList(
+        Artifact.builder()
+            .type("docker/image")
+            .name(name)
+            .version(content.getTag())
+            .reference(reference)
+            .build());
   }
 
   @Override
-  protected Function<Trigger, Pipeline> buildTrigger(Pipeline pipeline, DockerEvent dockerEvent) {
-    return trigger -> pipeline.withTrigger(trigger.atTag(dockerEvent.getContent().getTag()).withEventId(dockerEvent.getEventId()))
-      .withReceivedArtifacts(getArtifacts(dockerEvent));
+  protected Function<Trigger, Trigger> buildTrigger(DockerEvent dockerEvent) {
+    return trigger ->
+        trigger.atTag(dockerEvent.getContent().getTag()).withEventId(dockerEvent.getEventId());
   }
 
   @Override
   protected boolean isValidTrigger(Trigger trigger) {
-    return trigger.isEnabled() &&
-      (
-        (TRIGGER_TYPE.equals(trigger.getType()) &&
-          trigger.getAccount() != null &&
-          trigger.getRepository() != null)
-      );
+    return trigger.isEnabled()
+        && ((TRIGGER_TYPE.equals(trigger.getType())
+            && trigger.getAccount() != null
+            && trigger.getRepository() != null));
   }
 
   private boolean matchTags(String suppliedTag, String incomingTag) {
@@ -102,11 +104,11 @@ public class DockerEventHandler extends BaseTriggerEventHandler<DockerEvent> {
   }
 
   @Override
-  protected Predicate<Trigger> matchTriggerFor(DockerEvent dockerEvent, Pipeline pipeline) {
-    return trigger -> isMatchingTrigger(dockerEvent, trigger, pipeline);
+  protected Predicate<Trigger> matchTriggerFor(DockerEvent dockerEvent) {
+    return trigger -> isMatchingTrigger(dockerEvent, trigger);
   }
 
-  private boolean isMatchingTrigger(DockerEvent dockerEvent, Trigger trigger, Pipeline pipeline) {
+  private boolean isMatchingTrigger(DockerEvent dockerEvent, Trigger trigger) {
     String account = dockerEvent.getContent().getAccount();
     String repository = dockerEvent.getContent().getRepository();
     String eventTag = dockerEvent.getContent().getTag();
@@ -114,12 +116,10 @@ public class DockerEventHandler extends BaseTriggerEventHandler<DockerEvent> {
     if (StringUtils.isNotBlank(trigger.getTag())) {
       triggerTagPattern = trigger.getTag().trim();
     }
-    return trigger.getType().equals(TRIGGER_TYPE) &&
-            trigger.getRepository().equals(repository) &&
-            trigger.getAccount().equals(account) &&
-            ((triggerTagPattern == null && !eventTag.equals("latest"))
-              || triggerTagPattern != null && matchTags(triggerTagPattern, eventTag)) &&
-            anyArtifactsMatchExpected(getArtifacts(dockerEvent), trigger, pipeline);
+    return trigger.getType().equals(TRIGGER_TYPE)
+        && trigger.getRepository().equals(repository)
+        && trigger.getAccount().equals(account)
+        && ((triggerTagPattern == null && !eventTag.equals("latest"))
+            || triggerTagPattern != null && matchTags(triggerTagPattern, eventTag));
   }
 }
-
