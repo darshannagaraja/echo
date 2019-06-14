@@ -33,6 +33,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.stream.Collectors;
@@ -161,15 +162,26 @@ public class PipelineInitiator {
     } else {
       log.info(
           "Would trigger {} due to {} but triggering is disabled", pipeline, pipeline.getTrigger());
+      registry
+          .counter(
+              "orca.trigger.disabled",
+              "triggerSource",
+              triggerSource.name(),
+              "triggerType",
+              getTriggerType(pipeline))
+          .increment();
     }
   }
 
   private void triggerPipeline(Pipeline pipeline, TriggerSource triggerSource)
       throws RejectedExecutionException {
-    executorService.submit(() -> triggerPipelineImpl(pipeline, triggerSource));
+    Callable<Void> triggerWithCapturedContext =
+        AuthenticatedRequest.propagate(() -> triggerPipelineImpl(pipeline, triggerSource));
+
+    executorService.submit(triggerWithCapturedContext);
   }
 
-  private void triggerPipelineImpl(Pipeline pipeline, TriggerSource triggerSource) {
+  private Void triggerPipelineImpl(Pipeline pipeline, TriggerSource triggerSource) {
     try {
       TriggerResponse response;
 
@@ -231,6 +243,8 @@ public class PipelineInitiator {
 
       logOrcaErrorMetric(e.getClass().getName(), triggerSource.name(), getTriggerType(pipeline));
     }
+
+    return null;
   }
 
   private TriggerResponse triggerWithRetries(Pipeline pipeline) {
